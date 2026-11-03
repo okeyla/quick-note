@@ -20,7 +20,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Huninn&family=Iansui&display=swap">
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 <header class="top">
@@ -94,6 +94,14 @@
 </dialog>
 
 <div class="toast" id="toast"></div>
+
+<!-- 便利貼放大預覽（滑鼠停在便利貼上時顯示） -->
+<div class="preview hidden" id="preview" aria-hidden="true">
+  <div class="pv-title"></div>
+  <div class="pv-text"></div>
+  <div class="meta"></div>
+  <div class="pv-more">滾動滑鼠滾輪看更多</div>
+</div>
 
 <!-- 右下角的配色、字型切換 -->
 <div class="fabs">
@@ -416,7 +424,71 @@
     const meta = n =>
       `<div class="meta"><span class="tag ${n.visibility}">${VIS_TEXT[n.visibility]}</span><span class="tag">${escapeHtml(catName(n.category))}</span><span>${fmtTime(n.updated_at)}</span></div>`;
 
+    // ---------- 便利貼放大預覽：滑鼠停在便利貼上，用同樣底色的大卡片顯示完整內容 ----------
+    // 只在有滑鼠的裝置啟用；預覽卡不接收滑鼠事件，所以不會擋住或打斷 hover
+    const pv = $('#preview');
+    const canHover = matchMedia('(hover: hover) and (pointer: fine)').matches;
+    let hoverEl = null;
+    let hoverTimer = 0;
+
+    function hidePreview() {
+      clearTimeout(hoverTimer);
+      hoverEl = null;
+      pv.classList.add('hidden');
+    }
+    function showPreview(el) {
+      const n = notes.find(x => x.id === el.dataset.id);
+      if (!n || !el.isConnected) return;
+      pv.style.setProperty('--paper', el.style.getPropertyValue('--paper'));
+      pv.querySelector('.pv-title').textContent = n.title;
+      pv.querySelector('.pv-title').classList.toggle('hidden', !n.title);
+      pv.querySelector('.pv-text').textContent = n.content;
+      pv.querySelector('.pv-text').scrollTop = 0;
+      pv.querySelector('.meta').innerHTML = meta(n).replace(/^<div class="meta">|<\/div>$/g, '') +
+        (n.created_at !== n.updated_at ? `<span>建立 ${fmtTime(n.created_at)}</span>` : '');
+      // 放在便利貼旁邊空間比較大的那一側；兩側都太窄（例如視窗很小）就置中
+      const gap = 16, r = el.getBoundingClientRect();
+      const spaceRight = innerWidth - r.right - gap * 2, spaceLeft = r.left - gap * 2;
+      let width = Math.min(640, Math.max(spaceRight, spaceLeft));
+      let x;
+      if (width >= 360) x = spaceRight >= spaceLeft ? r.right + gap : r.left - gap - width;
+      else { width = Math.min(640, innerWidth - gap * 2); x = (innerWidth - width) / 2; }
+      pv.style.width = width + 'px';
+      pv.style.left = x + 'px';
+      pv.classList.remove('hidden');
+      // 先顯示才量得到高度，再讓卡片和便利貼垂直置中對齊，但不超出視窗
+      const h = pv.offsetHeight;
+      pv.style.top = Math.max(gap, Math.min(r.top + r.height / 2 - h / 2, innerHeight - h - gap)) + 'px';
+      const text = pv.querySelector('.pv-text');
+      pv.querySelector('.pv-more').classList.toggle('hidden', text.scrollHeight <= text.clientHeight);
+    }
+
+    if (canHover) {
+      const boardEl = $('#board');
+      boardEl.addEventListener('mouseover', e => {
+        const el = e.target.closest('.sticky');
+        if (el === hoverEl) return;
+        if (!el) { hidePreview(); return; }
+        const showing = !pv.classList.contains('hidden');
+        clearTimeout(hoverTimer);
+        hoverEl = el;
+        // 第一次停留稍等一下，避免滑鼠只是經過就跳出來；已經在預覽時換便利貼就立刻切換
+        hoverTimer = setTimeout(() => showPreview(el), showing ? 0 : 250);
+      });
+      boardEl.addEventListener('mouseleave', hidePreview);
+      // 內容太長時，在便利貼上滾動滑鼠滾輪就捲動預覽卡
+      boardEl.addEventListener('wheel', e => {
+        const text = pv.querySelector('.pv-text');
+        if (pv.classList.contains('hidden') || text.scrollHeight <= text.clientHeight) return;
+        e.preventDefault();
+        text.scrollTop += e.deltaY;
+      }, { passive: false });
+      addEventListener('scroll', hidePreview, { passive: true });
+      addEventListener('resize', hidePreview);
+    }
+
     function render() {
+      hidePreview();
       renderChips();
       setSeg($('#visFilter'), vis);
       setSeg($('#viewToggle'), view);
@@ -501,6 +573,7 @@
     const setVis = v => { fVis = v; setSeg($('#fVis'), v); };
 
     function openEditor(note) {
+      hidePreview();
       editing = note || null;
       $('#editorHeading').textContent = note ? '修改備忘錄' : '新增備忘錄';
       $('#fTitle').value = note?.title ?? '';
